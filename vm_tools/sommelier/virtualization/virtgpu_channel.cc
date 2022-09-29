@@ -11,6 +11,7 @@
 #include <xf86drm.h>
 #include <gbm.h>
 
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -113,13 +114,19 @@ int32_t fstat_pipe(int fd, uint32_t& inode) {
 }
 
 VirtGpuChannel::~VirtGpuChannel() {
-  if (ring_addr_ != MAP_FAILED)
-    munmap(ring_addr_, PAGE_SIZE);
+  if (channel_ring_addr_ != MAP_FAILED)
+    munmap(channel_ring_addr_, PAGE_SIZE);
+
+  if (query_ring_addr_ != MAP_FAILED)
+    munmap(query_ring_addr_, PAGE_SIZE);
 
   // An unwritten rule for the DRM subsystem is a valid GEM valid must be
   // non-zero.  Checkout drm_gem_handle_create_tail in the kernel.
-  if (ring_handle_)
-    close_gem_handle(ring_handle_);
+  if (channel_ring_handle_)
+    close_gem_handle(channel_ring_handle_);
+
+  if (query_ring_handle_)
+    close_gem_handle(query_ring_handle_);
 
   if (virtgpu_ >= 0)
     close(virtgpu_);
@@ -199,9 +206,49 @@ bool VirtGpuChannel::supports_dmabuf(void) {
   return supports_dmabuf_;
 }
 
+int32_t VirtGpuChannel::create_ring_blob(struct drm_virtgpu_resource_create_blob &drm_rc_blob) {
+  int32_t ret = 0;
+  // Create a shared ring buffer to read metadata queries.
+  drm_rc_blob.size = PAGE_SIZE;
+  drm_rc_blob.blob_mem = VIRTGPU_BLOB_MEM_GUEST;
+  drm_rc_blob.blob_flags = VIRTGPU_BLOB_FLAG_USE_MAPPABLE;
+
+  ret =
+      drmIoctl(virtgpu_, DRM_IOCTL_VIRTGPU_RESOURCE_CREATE_BLOB, &drm_rc_blob);
+  if (ret < 0) {
+    fprintf(stderr, "DRM_VIRTGPU_RESOURCE_CREATE_BLOB failed with %s\n",
+            strerror(errno));
+    return ret;
+  }
+  
+  return 0;
+}
+
+int32_t VirtGpuChannel::map_ring(uint32_t ring_handle, void* &out_addr) {
+  int32_t ret = 0;
+  struct drm_virtgpu_map map = {0};
+  
+  // Map shared ring buffer.
+  map.handle = ring_handle;
+  ret = drmIoctl(virtgpu_, DRM_IOCTL_VIRTGPU_MAP, &map);
+  if (ret < 0) {
+    fprintf(stderr, "DRM_IOCTL_VIRTGPU_MAP failed with %s\n", strerror(errno));
+    return ret;
+  }
+
+  out_addr = mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, virtgpu_,
+                    map.offset);
+
+  if (out_addr == MAP_FAILED) {
+    fprintf(stderr, "mmap failed with %s\n", strerror(errno));
+    return -1;
+  }
+  
+  return 0;
+}
+
 int32_t VirtGpuChannel::create_context(int& out_channel_fd) {
   int ret;
-  struct drm_virtgpu_map map = {0};
   struct drm_virtgpu_context_init init = {0};
   struct drm_virtgpu_resource_create_blob drm_rc_blob = {0};
   struct drm_virtgpu_context_set_param ctx_set_params[3] = {{0}};
@@ -226,33 +273,16 @@ int32_t VirtGpuChannel::create_context(int& out_channel_fd) {
   }
 
   // Create a shared ring buffer to read metadata queries.
-  drm_rc_blob.size = PAGE_SIZE;
-  drm_rc_blob.blob_mem = VIRTGPU_BLOB_MEM_GUEST;
-  drm_rc_blob.blob_flags = VIRTGPU_BLOB_FLAG_USE_MAPPABLE;
-
-  ret =
-      drmIoctl(virtgpu_, DRM_IOCTL_VIRTGPU_RESOURCE_CREATE_BLOB, &drm_rc_blob);
-  if (ret < 0) {
-    fprintf(stderr, "DRM_VIRTGPU_RESOURCE_CREATE_BLOB failed with %s\n",
-            strerror(errno));
+  ret = create_ring_blob(drm_rc_blob);
+  if (ret) {
+    fprintf(stderr, "failed to create ring blob\n");
     return ret;
   }
-
-  ring_handle_ = drm_rc_blob.bo_handle;
-
+  channel_ring_handle_ = drm_rc_blob.bo_handle;
   // Map shared ring buffer.
-  map.handle = ring_handle_;
-  ret = drmIoctl(virtgpu_, DRM_IOCTL_VIRTGPU_MAP, &map);
-  if (ret < 0) {
-    fprintf(stderr, "DRM_IOCTL_VIRTGPU_MAP failed with %s\n", strerror(errno));
-    return ret;
-  }
-
-  ring_addr_ = mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, virtgpu_,
-                    map.offset);
-
-  if (ring_addr_ == MAP_FAILED) {
-    fprintf(stderr, "mmap failed with %s\n", strerror(errno));
+  ret = map_ring(channel_ring_handle_, channel_ring_addr_);
+  if (ret) {
+    fprintf(stderr, "failed to map ring\n");
     return ret;
   }
 
@@ -262,9 +292,31 @@ int32_t VirtGpuChannel::create_context(int& out_channel_fd) {
   cmd_init.ring_id = drm_rc_blob.res_handle;
   cmd_init.channel_type = CROSS_DOMAIN_CHANNEL_TYPE_WAYLAND;
   ret = submit_cmd((uint32_t*)&cmd_init, cmd_init.hdr.cmd_size,
-                   CROSS_DOMAIN_RING_NONE, false);
+                   CROSS_DOMAIN_RING_NONE, channel_ring_handle_, false);
   if (ret < 0)
     return ret;
+
+  printf("done\n");
+  drm_rc_blob = {0};
+  // Create a shared ring buffer to read metadata queries.
+  ret = create_ring_blob(drm_rc_blob);
+  if (ret) {
+    fprintf(stderr, "failed to create ring blob\n");
+    return ret;
+  }
+  query_ring_handle_ = drm_rc_blob.bo_handle;
+  if (query_ring_handle_ == channel_ring_handle_) {
+    fprintf(stderr, "bug: query_ring_handle_ == query_ring_handle_\n");
+    exit(EXIT_FAILURE);
+  }
+  // Map shared ring buffer.
+  ret = map_ring(query_ring_handle_, query_ring_addr_);
+  if (ret) {
+    fprintf(stderr, "failed to map ring\n");
+    return ret;
+  }
+
+  printf("done\n");
 
   // Start polling right after initialization
   ret = channel_poll();
@@ -325,7 +377,7 @@ int32_t VirtGpuChannel::send(const struct WaylandSendReceive& send) {
   }
 
   ret = submit_cmd((uint32_t*)cmd_send, cmd_send->hdr.cmd_size,
-                   CROSS_DOMAIN_RING_NONE, false);
+                   CROSS_DOMAIN_RING_NONE, channel_ring_handle_, false);
   if (ret < 0)
     return ret;
 
@@ -337,7 +389,7 @@ int32_t VirtGpuChannel::handle_channel_event(
     struct WaylandSendReceive& receive,
     int& out_read_pipe) {
   int32_t ret;
-  struct CrossDomainHeader* cmd_hdr = (struct CrossDomainHeader*)ring_addr_;
+  struct CrossDomainHeader* cmd_hdr = (struct CrossDomainHeader*)channel_ring_addr_;
   ssize_t bytes_read;
   struct drm_event dummy_event;
 
@@ -437,7 +489,7 @@ int32_t VirtGpuChannel::handle_pipe(int read_fd, bool readable, bool& hang_up) {
   cmd_write->hang_up = hang_up;
 
   ret = submit_cmd((uint32_t*)cmd_write, cmd_write->hdr.cmd_size,
-                   CROSS_DOMAIN_RING_NONE, false);
+                   CROSS_DOMAIN_RING_NONE, channel_ring_handle_, false);
   if (ret < 0)
     return ret;
 
@@ -453,6 +505,7 @@ int32_t VirtGpuChannel::handle_pipe(int read_fd, bool readable, bool& hang_up) {
 int32_t VirtGpuChannel::submit_cmd(uint32_t* cmd,
                                    uint32_t size,
                                    uint32_t ring_idx,
+                                   uint32_t ring_handle,
                                    bool wait) {
   int32_t ret;
   struct drm_virtgpu_3d_wait wait_3d = {0};
@@ -463,7 +516,7 @@ int32_t VirtGpuChannel::submit_cmd(uint32_t* cmd,
   if (ring_idx != CROSS_DOMAIN_RING_NONE) {
     exec.flags = VIRTGPU_EXECBUF_RING_IDX;
     exec.ring_idx = ring_idx;
-    exec.bo_handles = (uint64_t)&ring_handle_;
+    exec.bo_handles = (uint64_t)&ring_handle;
     exec.num_bo_handles = 1;
   }
 
@@ -483,7 +536,7 @@ int32_t VirtGpuChannel::submit_cmd(uint32_t* cmd,
   if (wait) {
     ret = -EAGAIN;
     while (ret == -EAGAIN) {
-      wait_3d.handle = ring_handle_;
+      wait_3d.handle = ring_handle;
       ret = drmIoctl(virtgpu_, DRM_IOCTL_VIRTGPU_WAIT, &wait_3d);
     }
   }
@@ -500,7 +553,7 @@ int32_t VirtGpuChannel::image_query(const struct WaylandBufferCreateInfo& input,
                                     struct WaylandBufferCreateOutput& output,
                                     uint64_t& blob_id) {
   int32_t ret = 0;
-  uint32_t* addr = (uint32_t*)ring_addr_;
+  uint32_t* addr = (uint32_t*)query_ring_addr_;
   struct CrossDomainGetImageRequirements cmd_get_reqs = {{0}};
   struct BufferDescription new_desc = {{0}};
 
@@ -525,7 +578,7 @@ int32_t VirtGpuChannel::image_query(const struct WaylandBufferCreateInfo& input,
   cmd_get_reqs.flags = GBM_BO_USE_LINEAR | GBM_BO_USE_SCANOUT;
 
   ret = submit_cmd((uint32_t*)&cmd_get_reqs, cmd_get_reqs.hdr.cmd_size,
-                   CROSS_DOMAIN_QUERY_RING, true);
+                   CROSS_DOMAIN_QUERY_RING, query_ring_handle_, true);
   if (ret < 0)
     return ret;
 
@@ -576,7 +629,7 @@ int32_t VirtGpuChannel::channel_poll(void) {
   cmd_poll.hdr.cmd_size = sizeof(struct CrossDomainPoll);
 
   ret = submit_cmd((uint32_t*)&cmd_poll, cmd_poll.hdr.cmd_size,
-                   CROSS_DOMAIN_CHANNEL_RING, false);
+                   CROSS_DOMAIN_CHANNEL_RING, channel_ring_handle_, false);
   if (ret < 0)
     return ret;
 
@@ -589,6 +642,7 @@ int32_t VirtGpuChannel::create_host_blob(uint64_t blob_id,
   int32_t ret;
   struct drm_virtgpu_resource_create_blob drm_rc_blob = {0};
 
+  printf("size = %lu\n", size);
   drm_rc_blob.size = size;
   drm_rc_blob.blob_mem = VIRTGPU_BLOB_MEM_HOST3D;
   drm_rc_blob.blob_flags =
@@ -723,10 +777,10 @@ int32_t VirtGpuChannel::handle_receive(enum WaylandChannelEvent& event_type,
                                        int& out_read_pipe) {
   int ret;
   struct CrossDomainSendReceive* cmd_receive =
-      (struct CrossDomainSendReceive*)ring_addr_;
+      (struct CrossDomainSendReceive*)channel_ring_addr_;
 
   uint8_t* recv_data =
-      (uint8_t*)ring_addr_ + sizeof(struct CrossDomainSendReceive);
+      (uint8_t*)channel_ring_addr_ + sizeof(struct CrossDomainSendReceive);
 
   for (uint32_t i = 0; i < CROSS_DOMAIN_MAX_IDENTIFIERS; i++) {
     if (i < cmd_receive->num_identifiers) {
@@ -775,10 +829,10 @@ int32_t VirtGpuChannel::handle_read() {
   ssize_t bytes_written;
   size_t index;
   struct CrossDomainReadWrite* cmd_read =
-      (struct CrossDomainReadWrite*)ring_addr_;
+      (struct CrossDomainReadWrite*)channel_ring_addr_;
 
   uint8_t* read_data =
-      (uint8_t*)ring_addr_ + sizeof(struct CrossDomainReadWrite);
+      (uint8_t*)channel_ring_addr_ + sizeof(struct CrossDomainReadWrite);
 
   ret = pipe_lookup(CROSS_DOMAIN_ID_TYPE_READ_PIPE, cmd_read->identifier,
                     write_fd, index);
