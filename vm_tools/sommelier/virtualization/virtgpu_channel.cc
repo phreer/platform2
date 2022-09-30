@@ -254,6 +254,9 @@ int32_t VirtGpuChannel::create_context(int& out_channel_fd) {
   struct drm_virtgpu_context_set_param ctx_set_params[3] = {{0}};
   struct CrossDomainInit cmd_init = {{0}};
 
+  uint32_t query_ring_res_id = 0;
+  uint32_t channel_ring_res_id = 0;
+
   // Initialize the cross domain context.  Create one fence context to wait for
   // metadata queries.
   ctx_set_params[0].param = VIRTGPU_CONTEXT_PARAM_CAPSET_ID;
@@ -279,6 +282,7 @@ int32_t VirtGpuChannel::create_context(int& out_channel_fd) {
     return ret;
   }
   channel_ring_handle_ = drm_rc_blob.bo_handle;
+  channel_ring_res_id = drm_rc_blob.res_handle;
   // Map shared ring buffer.
   ret = map_ring(channel_ring_handle_, channel_ring_addr_);
   if (ret) {
@@ -286,17 +290,6 @@ int32_t VirtGpuChannel::create_context(int& out_channel_fd) {
     return ret;
   }
 
-  // Notify host about ring buffer
-  cmd_init.hdr.cmd = CROSS_DOMAIN_CMD_INIT;
-  cmd_init.hdr.cmd_size = sizeof(struct CrossDomainInit);
-  cmd_init.ring_id = drm_rc_blob.res_handle;
-  cmd_init.channel_type = CROSS_DOMAIN_CHANNEL_TYPE_WAYLAND;
-  ret = submit_cmd((uint32_t*)&cmd_init, cmd_init.hdr.cmd_size,
-                   CROSS_DOMAIN_RING_NONE, channel_ring_handle_, false);
-  if (ret < 0)
-    return ret;
-
-  printf("done\n");
   drm_rc_blob = {0};
   // Create a shared ring buffer to read metadata queries.
   ret = create_ring_blob(drm_rc_blob);
@@ -305,6 +298,7 @@ int32_t VirtGpuChannel::create_context(int& out_channel_fd) {
     return ret;
   }
   query_ring_handle_ = drm_rc_blob.bo_handle;
+  query_ring_res_id = drm_rc_blob.res_handle;
   if (query_ring_handle_ == channel_ring_handle_) {
     fprintf(stderr, "bug: query_ring_handle_ == query_ring_handle_\n");
     exit(EXIT_FAILURE);
@@ -316,7 +310,16 @@ int32_t VirtGpuChannel::create_context(int& out_channel_fd) {
     return ret;
   }
 
-  printf("done\n");
+  // Notify host about ring buffer
+  cmd_init.hdr.cmd = CROSS_DOMAIN_CMD_INIT;
+  cmd_init.hdr.cmd_size = sizeof(struct CrossDomainInit);
+  cmd_init.query_ring_id = query_ring_res_id;
+  cmd_init.channel_ring_id = channel_ring_res_id;
+  cmd_init.channel_type = CROSS_DOMAIN_CHANNEL_TYPE_WAYLAND;
+  ret = submit_cmd((uint32_t*)&cmd_init, cmd_init.hdr.cmd_size,
+                   CROSS_DOMAIN_RING_NONE, channel_ring_handle_, false);
+  if (ret < 0)
+    return ret;
 
   // Start polling right after initialization
   ret = channel_poll();
@@ -407,21 +410,28 @@ int32_t VirtGpuChannel::handle_channel_event(
   if (cmd_hdr->cmd == CROSS_DOMAIN_CMD_RECEIVE) {
     event_type = WaylandChannelEvent::Receive;
     ret = handle_receive(event_type, receive, out_read_pipe);
-    if (ret)
+    if (ret) {
+      printf("handle_recieve() failed, ret = %d\n", ret);
       return ret;
+    }
   } else if (cmd_hdr->cmd == CROSS_DOMAIN_CMD_READ) {
     event_type = WaylandChannelEvent::Read;
     ret = handle_read();
-    if (ret)
+    if (ret) {
+      printf("handle_read() failed, ret = %d\n", ret);
       return ret;
+    }
   } else {
+    printf("unknown cmd, cmd = %d\n", cmd_hdr->cmd);
     return -EINVAL;
   }
 
   // Start polling again
   ret = channel_poll();
-  if (ret < 0)
+  if (ret < 0) {
+    printf("channel_poll() failed, ret = %d\n", ret);
     return ret;
+  }
 
   return 0;
 }

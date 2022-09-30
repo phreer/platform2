@@ -251,7 +251,7 @@ static int sl_handle_wayland_channel_event(int fd, uint32_t mask, void* data) {
   if (rv) {
     close(ctx->virtwl_socket_fd);
     ctx->virtwl_socket_fd = -1;
-    return 0;
+    return rv;
   }
 
   if (event_type == WaylandChannelEvent::ReceiveAndProxy) {
