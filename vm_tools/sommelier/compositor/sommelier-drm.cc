@@ -157,9 +157,10 @@ static void sl_drm_create_prime_buffer(struct wl_client* client,
       ret = drmIoctl(drm_fd, DRM_IOCTL_VIRTGPU_RESOURCE_INFO_CROS, &info_arg);
       // Correct stride0 if we are able to get proper resource info.
       if (!ret) {
-        if (info_arg.stride) {
+        if (info_arg.stride && info_arg.blob_mem != VIRTGPU_BLOB_MEM_PRIME) {
           stride0 = info_arg.stride;
           format_modifier = info_arg.format_modifier;
+          printf("setting stride = %u, format_modifier = %lu\n", stride0, format_modifier);
         }
         is_gpu_buffer = 1;
       }
@@ -170,7 +171,7 @@ static void sl_drm_create_prime_buffer(struct wl_client* client,
       drmIoctl(drm_fd, DRM_IOCTL_GEM_CLOSE, &gem_close);
     }
   }
-
+  printf("stride0 = %u, offset0 = %u\n", stride0, offset0);
   buffer_params =
       zwp_linux_dmabuf_v1_create_params(host->ctx->linux_dmabuf->internal);
   zwp_linux_buffer_params_v1_add(buffer_params, name, 0, offset0, stride0,
@@ -269,6 +270,7 @@ static void sl_drm_callback_done(void* data,
   struct sl_host_drm* host =
       static_cast<sl_host_drm*>(wl_callback_get_user_data(callback));
 
+  // wl_drm_send_device(host->resource, "/dev/dri/renderD128");
   if (host->ctx->drm_device)
     wl_drm_send_device(host->resource, host->ctx->drm_device);
   if (host->version >= WL_DRM_CREATE_PRIME_BUFFER_SINCE_VERSION)
