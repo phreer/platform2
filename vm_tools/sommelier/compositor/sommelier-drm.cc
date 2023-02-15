@@ -157,7 +157,7 @@ static void sl_drm_create_prime_buffer(struct wl_client* client,
       ret = drmIoctl(drm_fd, DRM_IOCTL_VIRTGPU_RESOURCE_INFO_CROS, &info_arg);
       // Correct stride0 if we are able to get proper resource info.
       if (!ret) {
-        if (info_arg.stride) {
+        if (info_arg.stride && info_arg.blob_mem != VIRTGPU_BLOB_MEM_PRIME) {
           stride0 = info_arg.stride;
           format_modifier = info_arg.format_modifier;
         }
