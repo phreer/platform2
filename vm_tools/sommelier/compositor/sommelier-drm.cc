@@ -270,7 +270,7 @@ static void sl_drm_callback_done(void* data,
   struct sl_host_drm* host =
       static_cast<sl_host_drm*>(wl_callback_get_user_data(callback));
 
-  // wl_drm_send_device(host->resource, "/dev/dri/renderD128");
+  // wl_drm_send_device(host->resource, "/dev/dri/renderD129");
   if (host->ctx->drm_device)
     wl_drm_send_device(host->resource, host->ctx->drm_device);
   if (host->version >= WL_DRM_CREATE_PRIME_BUFFER_SINCE_VERSION)
@@ -295,7 +295,7 @@ static void sl_bind_host_drm(struct wl_client* client,
 
   host->linux_dmabuf_proxy = static_cast<zwp_linux_dmabuf_v1*>(wl_registry_bind(
       wl_display_get_registry(ctx->display), ctx->linux_dmabuf->id,
-      &zwp_linux_dmabuf_v1_interface, ctx->linux_dmabuf->version));
+      &zwp_linux_dmabuf_v1_interface, 2));
   zwp_linux_dmabuf_v1_add_listener(host->linux_dmabuf_proxy,
                                    &sl_linux_dmabuf_listener, host);
 
