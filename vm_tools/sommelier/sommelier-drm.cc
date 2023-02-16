@@ -226,7 +226,7 @@ static void sl_drm_callback_done(void* data,
   struct sl_host_drm* host =
       static_cast<sl_host_drm*>(wl_callback_get_user_data(callback));
 
-  // wl_drm_send_device(host->resource, "/dev/dri/renderD128");
+  // wl_drm_send_device(host->resource, "/dev/dri/renderD129");
   if (host->ctx->drm_device)
     wl_drm_send_device(host->resource, host->ctx->drm_device);
   if (host->version >= WL_DRM_CREATE_PRIME_BUFFER_SINCE_VERSION)
