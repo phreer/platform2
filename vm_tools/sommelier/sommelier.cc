@@ -665,17 +665,25 @@ void sl_registry_handler(void* data,
     // Allow non-integer scale.
     ctx->scale = MIN(MAX_SCALE, MAX(MIN_SCALE, ctx->desired_scale));
   } else if (strcmp(interface, "zwp_linux_dmabuf_v1") == 0) {
+    if (version < 3) {
+      fprintf(stderr, "Skipping Linux DMA-BUF interface as the version supported by the host compositor (%d) is less than 3\n", version);
+      return;
+    }
+    assert(!ctx->linux_dmabuf);
     struct sl_linux_dmabuf* linux_dmabuf =
         static_cast<sl_linux_dmabuf*>(malloc(sizeof(struct sl_linux_dmabuf)));
     assert(linux_dmabuf);
     linux_dmabuf->ctx = ctx;
     linux_dmabuf->id = id;
-    linux_dmabuf->version = MIN(2, version);
+    linux_dmabuf->version = MIN(3, version);
     linux_dmabuf->internal = static_cast<zwp_linux_dmabuf_v1*>(wl_registry_bind(
         registry, id, &zwp_linux_dmabuf_v1_interface, linux_dmabuf->version));
     assert(!ctx->linux_dmabuf);
     ctx->linux_dmabuf = linux_dmabuf;
     linux_dmabuf->host_drm_global = sl_drm_global_create(ctx);
+		if (ctx->enable_linux_dmabuf_global) {
+			linux_dmabuf->host_linux_dmabuf_global = sl_linux_dmabuf_global_create(ctx);
+		}
   } else if (strcmp(interface, "zwp_linux_explicit_synchronization_v1") == 0) {
     struct sl_linux_explicit_synchronization* linux_explicit_synchronization =
         static_cast<sl_linux_explicit_synchronization*>(
@@ -845,6 +853,8 @@ void sl_registry_remover(void* data,
   if (ctx->linux_dmabuf && ctx->linux_dmabuf->id == id) {
     if (ctx->linux_dmabuf->host_drm_global)
       sl_global_destroy(ctx->linux_dmabuf->host_drm_global);
+    if (ctx->linux_dmabuf->host_linux_dmabuf_global)
+      sl_global_destroy(ctx->linux_dmabuf->host_linux_dmabuf_global);
     zwp_linux_dmabuf_v1_destroy(ctx->linux_dmabuf->internal);
     free(ctx->linux_dmabuf);
     ctx->linux_dmabuf = nullptr;
@@ -3376,6 +3386,7 @@ static void sl_print_usage() {
       "  --enable-xshape\t\tEnable X11 XShape extension support\n"
       "  --enable-x11-move-windows\t\tLet X11 apps control window position,\n"
       "\tif the host compositor supports the aura_shell protocol.\n"
+      "  --enable-linux-dmabuf-global\tEnable Linux DMA-BUF protocol implementation\n"
       "  --no-exit-with-child\t\tKeep process alive after child exists\n"
       "  --no-clipboard-manager\tDisable X11 clipboard manager\n"
       "  --frame-color=COLOR\t\tWindow frame color for X11 clients\n"
@@ -3847,7 +3858,9 @@ int real_main(int argc, char** argv) {
       ctx.enable_xshape = true;
     } else if (strstr(arg, "--enable-x11-move-windows") == arg) {
       ctx.enable_x11_move_windows = true;
-    } else if (strstr(arg, "--virtgpu-channel") == arg) {
+    } else if (strstr(arg, "--enable-linux-dmabuf-global") == arg) {
+      ctx.enable_linux_dmabuf_global = true;
+    }else if (strstr(arg, "--virtgpu-channel") == arg) {
       ctx.use_virtgpu_channel = true;
     } else if (strstr(arg, "--noop-driver") == arg) {
       noop_driver = true;
