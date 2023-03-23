@@ -134,7 +134,7 @@ void sl_linux_buffer_params_v1_create(struct wl_client *client,
   struct sl_host_linux_buffer_params *host =
       static_cast<sl_host_linux_buffer_params*>(
           wl_resource_get_user_data(resource));
-  printf("%s(): start\n", __func__);
+  printf("%s(): format = %x\n", __func__, format);
 
   zwp_linux_buffer_params_v1_create(host->proxy, width, height, format, flags);
   host->width = width;
@@ -153,7 +153,7 @@ void sl_linux_buffer_params_v1_create_immed(struct wl_client *client,
   struct sl_host_linux_buffer_params *host =
       static_cast<sl_host_linux_buffer_params*>(
           wl_resource_get_user_data(resource));
-  printf("%s(): start\n", __func__);
+  printf("%s(): format = %x\n", __func__, format);
   host->width = width;
   host->height = height;
   host->format = format;
