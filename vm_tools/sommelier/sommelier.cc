@@ -3386,6 +3386,7 @@ static void sl_print_usage() {
       "  --enable-xshape\t\tEnable X11 XShape extension support\n"
       "  --enable-x11-move-windows\t\tLet X11 apps control window position,\n"
       "\tif the host compositor supports the aura_shell protocol.\n"
+      "  --enable-linux-dmabuf-global\tEnable Linux DMA-BUF protocol implementation\n"
       "  --no-exit-with-child\t\tKeep process alive after child exists\n"
       "  --no-clipboard-manager\tDisable X11 clipboard manager\n"
       "  --frame-color=COLOR\t\tWindow frame color for X11 clients\n"
@@ -3857,7 +3858,9 @@ int real_main(int argc, char** argv) {
       ctx.enable_xshape = true;
     } else if (strstr(arg, "--enable-x11-move-windows") == arg) {
       ctx.enable_x11_move_windows = true;
-    } else if (strstr(arg, "--virtgpu-channel") == arg) {
+    } else if (strstr(arg, "--enable-linux-dmabuf-global") == arg) {
+      ctx.enable_linux_dmabuf_global = true;
+    }else if (strstr(arg, "--virtgpu-channel") == arg) {
       ctx.use_virtgpu_channel = true;
     } else if (strstr(arg, "--noop-driver") == arg) {
       noop_driver = true;
