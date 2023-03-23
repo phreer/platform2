@@ -678,7 +678,9 @@ void sl_registry_handler(void* data,
     assert(!ctx->linux_dmabuf);
     ctx->linux_dmabuf = linux_dmabuf;
     linux_dmabuf->host_drm_global = sl_drm_global_create(ctx);
-    linux_dmabuf->host_linux_dmabuf_global = sl_linux_dmabuf_global_create(ctx);
+    if (ctx->enable_linux_dmabuf_global) {
+      linux_dmabuf->host_linux_dmabuf_global = sl_linux_dmabuf_global_create(ctx);
+    }
   } else if (strcmp(interface, "zwp_linux_explicit_synchronization_v1") == 0) {
     struct sl_linux_explicit_synchronization* linux_explicit_synchronization =
         static_cast<sl_linux_explicit_synchronization*>(
@@ -3344,6 +3346,7 @@ static void sl_print_usage() {
       "  --xwayland-gl-driver-path=PATH\tPath to GL drivers for Xwayland\n"
       "  --xwayland-cmd-prefix=PREFIX\tXwayland command line prefix\n"
       "  --enable-xshape\t\tEnable X11 XShape extension support\n"
+      "  --enable-linux-dmabuf-global\tEnable Linux DMA-BUF protocol implementation\n"
       "  --no-exit-with-child\t\tKeep process alive after child exists\n"
       "  --no-clipboard-manager\tDisable X11 clipboard manager\n"
       "  --frame-color=COLOR\t\tWindow frame color for X11 clients\n"
@@ -3799,7 +3802,9 @@ int real_main(int argc, char** argv) {
       ctx.use_explicit_fence = true;
     } else if (strstr(arg, "--enable-xshape") == arg) {
       ctx.enable_xshape = true;
-    } else if (strstr(arg, "--virtgpu-channel") == arg) {
+    } else if (strstr(arg, "--enable-linux-dmabuf-global") == arg) {
+      ctx.enable_linux_dmabuf_global = true;
+    }else if (strstr(arg, "--virtgpu-channel") == arg) {
       ctx.use_virtgpu_channel = true;
     } else if (strstr(arg, "--noop-driver") == arg) {
       noop_driver = true;
