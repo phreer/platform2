@@ -6,6 +6,7 @@
 #include "sommelier-tracing.h"    // NOLINT(build/include_directory)
 #include "sommelier-transform.h"  // NOLINT(build/include_directory)
 #include "sommelier-xshape.h"     // NOLINT(build/include_directory)
+#include "virtualization/wayland_channel.h"
 #ifdef GAMEPAD_SUPPORT
 #include "libevdev/libevdev-shim.h"
 #endif
@@ -4001,7 +4002,7 @@ int real_main(int argc, char** argv) {
     drm_device = strdup(force_drm_device);
   } else {
     // Enumerate render nodes to find the virtio_gpu device.
-    drm_fd = open_virtgpu(&drm_device);
+    drm_fd = open_drm_device(VIRTIO_GPU_DRIVER_NAME, &drm_device);
   }
   if (drm_fd >= 0) {
     ctx.gbm = gbm_create_device(drm_fd);
@@ -4010,6 +4011,7 @@ int real_main(int argc, char** argv) {
       return EXIT_FAILURE;
     }
 
+    ctx.drm_fd = drm_fd;
     ctx.drm_device = drm_device;
   }
 
