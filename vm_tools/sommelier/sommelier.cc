@@ -6,6 +6,7 @@
 #include "sommelier-tracing.h"    // NOLINT(build/include_directory)
 #include "sommelier-transform.h"  // NOLINT(build/include_directory)
 #include "sommelier-xshape.h"     // NOLINT(build/include_directory)
+#include "virtualization/wayland_channel.h"
 #ifdef GAMEPAD_SUPPORT
 #include "libevdev/libevdev-shim.h"
 #endif
@@ -669,13 +670,12 @@ void sl_registry_handler(void* data,
       fprintf(stderr, "Skipping Linux DMA-BUF interface as the version supported by the host compositor (%d) is less than 3\n", version);
       return;
     }
-    assert(!ctx->linux_dmabuf);
     struct sl_linux_dmabuf* linux_dmabuf =
         static_cast<sl_linux_dmabuf*>(malloc(sizeof(struct sl_linux_dmabuf)));
     assert(linux_dmabuf);
     linux_dmabuf->ctx = ctx;
     linux_dmabuf->id = id;
-    linux_dmabuf->version = MIN(3, version);
+    linux_dmabuf->version = version;
     linux_dmabuf->internal = static_cast<zwp_linux_dmabuf_v1*>(wl_registry_bind(
         registry, id, &zwp_linux_dmabuf_v1_interface, linux_dmabuf->version));
     assert(!ctx->linux_dmabuf);
@@ -3987,29 +3987,27 @@ int real_main(int argc, char** argv) {
     return EXIT_FAILURE;
   }
 
-  int drm_fd = -1;
-  char* drm_device = nullptr;
+  // Open GBM device for video memory management.
+  ctx.virtio_gpu_fd = open_drm_device(VIRTIO_GPU_DRIVER_NAME, &ctx.virtgpu_drm_device);
   if (force_drm_device != nullptr) {
     // Use DRM device specified on the command line.
-    drm_fd = open(force_drm_device, O_RDWR | O_CLOEXEC);
+    ctx.virtio_gpu_fd = open(force_drm_device, O_RDWR | O_CLOEXEC);
     if (drm_fd == -1) {
       fprintf(stderr, "error: could not open %s (%s)\n", force_drm_device,
               strerror(errno));
       return EXIT_FAILURE;
     }
-    drm_device = strdup(force_drm_device);
+    ctx.render_drm_device = strdup(force_drm_device);
   } else {
-    // Enumerate render nodes to find the virtio_gpu device.
-    drm_fd = open_virtgpu(&drm_device);
+    ctx.render_gpu_fd = ctx.virtio_gpu_fd;
+    ctx.render_drm_device = ctx.virtio_gpu_drm_device;
   }
   if (drm_fd >= 0) {
-    ctx.gbm = gbm_create_device(drm_fd);
+    ctx.gbm = gbm_create_device(ctx.render_gpu_fd);
     if (!ctx.gbm) {
       fprintf(stderr, "error: couldn't get display device\n");
       return EXIT_FAILURE;
     }
-
-    ctx.drm_device = drm_device;
   }
 
   wl_array_init(&ctx.dpi);
