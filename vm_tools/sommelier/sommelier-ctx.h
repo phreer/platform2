@@ -98,8 +98,16 @@ struct sl_context {
   int virtwl_display_fd;
   std::unique_ptr<struct wl_event_source> wayland_channel_event_source;
   std::unique_ptr<struct wl_event_source> virtwl_socket_event_source;
-  const char* drm_device;
+
+  int virtio_gpu_fd;
+  const char* virtio_gpu_drm_device;
+  // This is for rendering on passed through GPU instead of virgl.
+  // If no additional GPU is valid, this will be the same as virtgpu_drm_device.
+  int render_gpu_fd;
+  const char* render_drm_device;
+  // The gbm device is created out of the render_drm_device.
   struct gbm_device* gbm;
+
   int xwayland;
   pid_t xwayland_pid;
   // XWayland-hosting sommelier instances allow additional connections for IME

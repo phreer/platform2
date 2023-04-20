@@ -50,7 +50,7 @@ struct virtgpu_param {
 #define PARAM(x) \
   (struct virtgpu_param) { x, #x, 0 }
 
-int open_virtgpu(char** drm_device) {
+int open_drm_device(const char* driver_name, char** drm_device) {
   int fd;
   char* node;
   drmVersionPtr drm_version;
@@ -77,9 +77,9 @@ int open_virtgpu(char** drm_device) {
       continue;
     }
 
-    if (!strcmp(drm_version->name, "virtio_gpu")) {
+    if (!strcmp(drm_version->name, driver_name)) {
       drmFreeVersion(drm_version);
-      *drm_device = strdup(node);
+      if (drm_device) *drm_device = strdup(node);
       free(node);
       return fd;
     }
@@ -134,19 +134,15 @@ VirtGpuChannel::~VirtGpuChannel() {
 
 int32_t VirtGpuChannel::init() {
   int32_t ret;
-  char* drm_device = NULL;
   uint32_t supports_wayland;
   struct drm_virtgpu_get_caps args = {0};
   struct CrossDomainCapabilities cross_domain_caps = {0};
 
-  virtgpu_ = open_virtgpu(&drm_device);
+  virtgpu_ = open_drm_device(VIRTIO_GPU_DRIVER_NAME, NULL);
   if (virtgpu_ < 0) {
     fprintf(stderr, "failed to open virtgpu\n");
     return -errno;
   }
-
-  // Not needed by the VirtGpuChannel.
-  free(drm_device);
 
   struct virtgpu_param params[REQUIRED_PARAMS_SIZE] = {
       PARAM(VIRTGPU_PARAM_3D_FEATURES),

@@ -11,6 +11,8 @@
 #include <libdrm/drm_fourcc.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <wayland-server-core.h>
 #include <xf86drm.h>
@@ -24,16 +26,27 @@
 
 struct sl_host_linux_dmabuf_feedback;
 
+struct format_table {
+  unsigned int size = 0;
+  struct {
+    uint32_t format;
+    uint32_t padding;
+    uint64_t modifier;
+  } *table = NULL;
+};
+
 struct sl_host_linux_dmabuf {
   struct sl_context* ctx;
+  // The version that client wants to bind.
   uint32_t version;
   struct wl_resource* resource;
+  
+  // Proxy data
   struct zwp_linux_dmabuf_v1* linux_dmabuf_proxy;
+  std::vector<uint32_t> formats;
+  std::vector<uint64_t> modifiers;
+  
   struct wl_callback* callback;
-
-  // Registry of feedback objects
-  struct sl_host_linux_dmabuf_feedback* default_feedback;
-  std::map<sl_host_surface*, sl_host_linux_dmabuf_feedback*> surface_feedback_map;
 };
 
 struct sl_dmabuf_plane {
@@ -50,20 +63,28 @@ struct sl_host_linux_buffer_params {
   struct sl_host_linux_dmabuf* host_linux_dmabuf;
   struct wl_resource* resource;
   struct wl_client *client;
-  struct zwp_linux_buffer_params_v1* proxy;
   int32_t width;
   int32_t height;
   uint32_t format;
   uint32_t flags;
   struct sl_dmabuf_plane *plane_list;
   struct sl_host_buffer *host_buffer;
+
+  // Proxy data
+  struct zwp_linux_buffer_params_v1* proxy;
 };
 
 struct sl_host_linux_dmabuf_feedback {
   struct sl_host_linux_dmabuf* host_linux_dmabuf;
+  struct wl_resource* resource;
+  struct wl_client *client;
+
+  struct format_table;
+
+  // Proxy data
   struct zwp_linux_dmabuf_feedback_v1* proxy;
-  bool completed = false;
 };
+
 
 static void sl_linux_dmabuf_destroy(struct wl_client *client,
 			                              struct wl_resource *resource) {
@@ -257,6 +278,115 @@ static void sl_linux_dmabuf_create_params(struct wl_client *client,
 
 }
 
+static bool devid_from_fd(int fd, dev_t *devid) {
+	struct stat stat;
+	if (fstat(fd, &stat) != 0) {
+		fprintf(stderr, "fstat failed\n");
+		return false;
+	}
+	*devid = stat.st_rdev;
+	return true;
+}
+
+static void sl_linux_dmabuf_feedback_done(void *data,
+    struct zwp_linux_dmabuf_feedback_v1 *feedback) {
+  struct sl_host_linux_dmabuf_feedback *host_feedback =
+      static_cast<sl_host_linux_dmabuf_feedback*>(zwp_linux_dmabuf_feedback_v1_get_user_data(feedback));
+  struct sl_context *ctx = host_feedback->host_linux_dmabuf->ctx;
+  host_feedback->complete = true;
+
+  dev_t devid;
+  if (!devid_from_fd(ctx->virtio_gpu_fd, &devid)) {
+    if (!devid_from_fd(ctx->render_gpu_fd, &devid)) {
+      fprintf(stderr, "failed to get any devid\n");
+      exit(EXIT_FAILURE);
+    }
+  }
+  wl_array devid_array = {
+    .size = sizeof(devid),
+    .data = static_cast<void *>(&devid),
+  };
+  zwp_linux_dmabuf_feedback_v1_send_main_device(host_feedback->resource,
+                                                &devid_array);
+}
+
+static void sl_linux_dmabuf_feedback_format_table(void *data,
+			     struct zwp_linux_dmabuf_feedback_v1 *feedback,
+			     int32_t fd,
+			     uint32_t size) {
+  struct sl_host_linux_dmabuf_feedback *host_feedback =
+      static_cast<sl_host_linux_dmabuf_feedback*>(zwp_linux_dmabuf_feedback_v1_get_user_data(feedback));
+
+  host_feedback->format_table.size = size;
+  host_feedback->format_table.table = mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, 0);
+  if (host_feedback->format_table.table == MMAP_FAILED) {
+    fprintf(stderr, "failed to mmap format table\n");
+    exit(EXIT_FAILURE);
+  }
+
+  close(fd);
+}
+
+static void sl_linux_dmabuf_feedback_done(void *data,
+    struct zwp_linux_dmabuf_feedback_v1 *zwp_linux_dmabuf_feedback_v1) {
+  struct sl_host_linux_dmabuf_feedback *host_feedback =
+      static_cast<sl_host_linux_dmabuf_feedback*>(zwp_linux_dmabuf_feedback_v1_get_user_data(feedback));
+  host_feedback->complete = true;
+}
+
+static void sl_linux_dmabuf_feedback_main_device(void *data,
+    struct zwp_linux_dmabuf_feedback_v1 *feedback,
+    struct wl_array *device) {
+  // Ignore this event, as the device resides in host and we have no way to
+  // access it.
+}
+
+static void sl_linux_dmabuf_feedback_tranche_done(void *data,
+     struct zwp_linux_dmabuf_feedback_v1 *zwp_linux_dmabuf_feedback_v1) {
+  struct sl_host_linux_dmabuf_feedback *host_feedback =
+      static_cast<sl_host_linux_dmabuf_feedback*>(zwp_linux_dmabuf_feedback_v1_get_user_data(feedback));
+
+    host_feedback->tranches.back().complete = true;
+}
+
+static void sl_linux_dmabuf_feedback_tranche_target_device(void *data,
+    struct zwp_linux_dmabuf_feedback_v1 *zwp_linux_dmabuf_feedback_v1,
+    struct wl_array *device) {
+  struct sl_host_linux_dmabuf_feedback *host_feedback =
+      static_cast<sl_host_linux_dmabuf_feedback*>(zwp_linux_dmabuf_feedback_v1_get_user_data(feedback));
+
+  // We don't care about the target device, but this implicates a new tranche.
+  host_feedback->tranches.emplace_back(tranche());
+}
+
+static void sl_linux_dmabuf_feedback_tranche_formats(void *data,
+    struct zwp_linux_dmabuf_feedback_v1 *feedback,
+    struct wl_array *indices) {
+  struct sl_host_linux_dmabuf_feedback *host_feedback =
+      static_cast<sl_host_linux_dmabuf_feedback*>(zwp_linux_dmabuf_feedback_v1_get_user_data(feedback));
+  wl_array_for_each(index, indices) {
+    host_feedback->tranches.back().indices.emplace_back(indices);
+  }
+}
+
+static void sl_linux_dmabuf_feedback_tranche_flags(void *data,
+    struct zwp_linux_dmabuf_feedback_v1 *feedback,
+    uint32_t flags) {
+  struct sl_host_linux_dmabuf_feedback *host_feedback =
+      static_cast<sl_host_linux_dmabuf_feedback*>(zwp_linux_dmabuf_feedback_v1_get_user_data(feedback));
+  host_feedback->tranches.back().flags = flags;
+}
+
+static const struct zwp_linux_dmabuf_feedback_v1_listener sl_linux_dmabuf_feedback_listener = {
+  .done = sl_linux_dmabuf_feedback_done,
+  .format_table = sl_linux_dmabuf_feedback_format_table,
+  .main_device = sl_linux_dmabuf_feedback_main_device,
+  .tranche_done = sl_linux_dmabuf_feedback_tranche_done,
+  .tranche_target_device = sl_linux_dmabuf_feedback_tranche_target_device,
+  .tranche_formats = sl_linux_dmabuf_feedback_tranche_formats,
+  .tranche_flags = sl_linux_dmabuf_feedback_tranche_flags,
+};
+
 void sl_linux_dmabuf_get_default_feedback(struct wl_client *client,
 				                                  struct wl_resource *resource,
 				                                  uint32_t id) {
@@ -265,6 +395,26 @@ void sl_linux_dmabuf_get_default_feedback(struct wl_client *client,
   struct sl_host_linux_dmabuf_feedback* feedback =
       static_cast<struct sl_host_linux_dmabuf_feedback*>(
           malloc(sizeof(feedback)));
+  assert(feedback);
+
+  feedback->host_linux_dmabuf = host;
+  feedback->client = client;
+  feedback->resource = wl_resource_create(
+      client, &zwp_linux_dmabuf_feedback_v1_interface, host->version, id);
+  wl_resource_set_implementation(feedback->resource,
+                                 &sl_linux_dmabuf_feedback_v1_implementation,
+                                 feedback,
+                                 sl_destroy_host_linux_dmabuf_feedback);
+
+  host->default_feedback->proxy = zwp_linux_dmabuf_v1_get_default_feedback(
+      host->linux_dmabuf_proxy);
+  zwp_linux_dmabuf_feedback_v1_set_user_data(host->default_feedback->proxy,
+                                             host->default_feedback);
+  zwp_linux_dmabuf_feedback_v1_add_listener(host->default_feedback->proxy,
+                                            &sl_linux_dmabuf_feedback_listener,
+                                            host);
+
+  host->default_feedback = feedback;
 }
 
 void sl_linux_dmabuf_get_surface_feedback(struct wl_client *client,
@@ -305,7 +455,9 @@ static void sl_linux_dmabuf_format(void* data,
   struct sl_host_linux_dmabuf* host = static_cast<sl_host_linux_dmabuf*>(
       zwp_linux_dmabuf_v1_get_user_data(linux_dmabuf));
 
-  zwp_linux_dmabuf_v1_send_format(host->resource, format);
+  if (host->version >= ZWP_LINUX_DMABUF_V1_GET_DEFAULT_FEEDBACK_SINCE_VERSION) {
+    zwp_linux_dmabuf_v1_send_format(host->resource, format);
+  }
 }
 
 static void sl_linux_dmabuf_modifier(void* data,
@@ -315,8 +467,13 @@ static void sl_linux_dmabuf_modifier(void* data,
                             uint32_t modifier_lo) {
   struct sl_host_linux_dmabuf* host = static_cast<sl_host_linux_dmabuf*>(
       zwp_linux_dmabuf_v1_get_user_data(linux_dmabuf));
+  
+  host->formats.emplace_back(format);
+  host->modifiers.emplace_back(static_cast<uint64_t>(modifier_hi) << 32 | modifier_lo);
 
-  zwp_linux_dmabuf_v1_send_modifier(host->resource, format, modifier_hi, modifier_lo);
+  if (host->version >= ZWP_LINUX_DMABUF_V1_GET_DEFAULT_FEEDBACK_SINCE_VERSION) {
+    zwp_linux_dmabuf_v1_send_modifier(host->resource, format, modifier_hi, modifier_lo);
+  }
 }
 
 static const struct zwp_linux_dmabuf_v1_listener sl_linux_dmabuf_listener = {
@@ -334,29 +491,6 @@ static void sl_linux_dmabuf_callback_done(void* data,
 static const struct wl_callback_listener sl_linux_dmabuf_callback_listener = {
     sl_linux_dmabuf_callback_done};
 
-void sl_linux_dmabuf_feedback_done(void *data,
-    struct zwp_linux_dmabuf_feedback_v1 *feedback) {
-  struct sl_host_linux_dmabuf_feedback *host_feedback =
-      static_cast<sl_host_linux_dmabuf_feedback*>(zwp_linux_dmabuf_feedback_v1_get_user_data(feedback));
-  host_feedback->completed = true;
-}
-
-void sl_linux_dmabuf_feedback_main_device(void *data,
-    struct zwp_linux_dmabuf_feedback_v1 *feedback,
-    struct wl_array *device) {
-  struct sl_host_linux_dmabuf_feedback *host_feedback =
-      static_cast<sl_host_linux_dmabuf_feedback*>(zwp_linux_dmabuf_feedback_v1_get_user_data(feedback));
-}
-
-static const struct zwp_linux_dmabuf_feedback_v1_listener sl_linux_dmabuf_feedback_listener = {
-  sl_linux_dmabuf_feedback_done,
-  sl_linux_dmabuf_feedback_format_table,
-  sl_linux_dmabuf_feedback_main_device,
-  sl_linux_dmabuf_feedback_tranche_done,
-  sl_linux_dmabuf_feedback_tranche_target_device,
-  sl_linux_dmabuf_feedback_tranche_formats,
-  sl_linux_dmabuf_feedback_tranche_flags,
-};
 
 static void sl_bind_host_linux_dmabuf(struct wl_client* client,
                                       void* data,
@@ -367,30 +501,27 @@ static void sl_bind_host_linux_dmabuf(struct wl_client* client,
       static_cast<sl_host_linux_dmabuf*>(malloc(sizeof(*host)));
   assert(host);
 
-  if (ctx->linux_dmabuf->version >= ZWP_LINUX_DMABUF_V1_GET_DEFAULT_FEEDBACK_SINCE_VERSION) {
-    host->default_feedback = static_cast<sl_host_linux_dmabuf_feedback*>(
-        malloc(sizeof(sl_host_linux_dmabuf_feedback)));
-    assert(host->default_feedback);
-
-    host->default_feedback->host_linux_dmabuf = host;
-    host->default_feedback->proxy = zwp_linux_dmabuf_v1_get_default_feedback(host->linux_dmabuf_proxy);
-    zwp_linux_dmabuf_feedback_v1_set_user_data(host->default_feedback->proxy, host->default_feedback);
-    zwp_linux_dmabuf_feedback_v1_add_listener(host->default_feedback->proxy, &sl_linux_dmabuf_feedback_listener, host);
-  }
   host->ctx = ctx;
-  host->version = MIN(version, 3);
+  host->version = version;
   host->resource =
       wl_resource_create(client, &zwp_linux_dmabuf_v1_interface, host->version, id);
   wl_resource_set_implementation(host->resource,
                                  &sl_linux_dmabuf_implementation, host,
                                  sl_destroy_host_linux_dmabuf);
 
+  // TODO We bind the host Linux DMA-BUF object with version up to only 3
+  // because in version 4, the format_table event of feedback object includes
+  // a fd referencing a share memory region in host, which we have no way to
+  // access right now.  However, this won't be a big problem since we only
+  // care about formats and modifiers compatable with the host compositor and
+  // version 3 of Linux DMA-BUF interface should provide these.
   host->linux_dmabuf_proxy = static_cast<zwp_linux_dmabuf_v1*>(wl_registry_bind(
       wl_display_get_registry(ctx->display), ctx->linux_dmabuf->id,
-      &zwp_linux_dmabuf_v1_interface, ctx->linux_dmabuf->version));
+      &zwp_linux_dmabuf_v1_interface, 3));
   zwp_linux_dmabuf_v1_set_user_data(host->linux_dmabuf_proxy, host);
   zwp_linux_dmabuf_v1_add_listener(host->linux_dmabuf_proxy,
                                    &sl_linux_dmabuf_listener, host);
+
 
   host->callback = wl_display_sync(ctx->display);
   wl_callback_set_user_data(host->callback, host);
