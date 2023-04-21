@@ -515,6 +515,7 @@ static void sl_bind_host_linux_dmabuf(struct wl_client* client,
   host->callback = wl_display_sync(ctx->display);
   wl_callback_set_user_data(host->callback, host);
   wl_callback_add_listener(host->callback, &sl_linux_dmabuf_callback_listener, host);
+  wl_display_roundtrip(ctx->display);
 
   host->resource =
       wl_resource_create(host->client, &zwp_linux_dmabuf_v1_interface, host->version, host->id);
