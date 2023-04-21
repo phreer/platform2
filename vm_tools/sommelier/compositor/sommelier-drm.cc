@@ -160,7 +160,7 @@ static void sl_drm_create_prime_buffer(struct wl_client* client,
         if (info_arg.stride && info_arg.blob_mem != VIRTGPU_BLOB_MEM_PRIME) {
           stride0 = info_arg.stride;
           format_modifier = info_arg.format_modifier;
-          printf("setting stride = %u, format_modifier = %lu\n", stride0, format_modifier);
+          printf("%s(): setting stride = %u, format_modifier = 0x%lx\n", __func__, stride0, format_modifier);
         }
         is_gpu_buffer = 1;
       }
@@ -270,9 +270,7 @@ static void sl_drm_callback_done(void* data,
   struct sl_host_drm* host =
       static_cast<sl_host_drm*>(wl_callback_get_user_data(callback));
 
-  // wl_drm_send_device(host->resource, "/dev/dri/renderD129");
-  if (host->ctx->drm_device)
-    wl_drm_send_device(host->resource, host->ctx->drm_device);
+  wl_drm_send_device(host->resource, host->ctx->render_drm_device);
   if (host->version >= WL_DRM_CREATE_PRIME_BUFFER_SINCE_VERSION)
     wl_drm_send_capabilities(host->resource, WL_DRM_CAPABILITY_PRIME);
 }

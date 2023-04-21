@@ -110,9 +110,10 @@ static void sl_linux_buffer_params_v1_add(struct wl_client *client,
   struct drm_prime_handle prime_handle;
   int ret = 0;
   int drm_fd = gbm_device_get_fd(host->host_linux_dmabuf->ctx->gbm);
+  uint64_t modifier = ((uint64_t) modifier_hi << 32) | modifier_lo;
 
   assert(plane);
-  printf("%s(): modifier = %lx\n", __func__, (uint64_t) modifier_hi << 32 | modifier_lo);
+  printf("%s(): modifier = %lx\n", __func__, modifier);
 
   memset(&prime_handle, 0, sizeof(prime_handle));
   prime_handle.fd = fd;
@@ -133,6 +134,10 @@ static void sl_linux_buffer_params_v1_add(struct wl_client *client,
     if (!ret) {
       if (info_arg.stride && info_arg.blob_mem != VIRTGPU_BLOB_MEM_PRIME) {
         stride = info_arg.stride;
+        modifier = info_arg.format_modifier;
+        modifier_lo = modifier & 0xffffffff;
+        modifier_hi = modifier >> 32;
+        printf("%s(): setting stride = %u, modifier = 0x%lx\n", __func__, stride, modifier);
       }
     }
 
@@ -342,8 +347,8 @@ static int advertise_feedback_event(void* data) {
   printf("%s(): send event\n", __func__);
   // Send main device
   dev_t devid;
-  if (!devid_from_fd(ctx->virtio_gpu_fd, &devid)) {
-    if (!devid_from_fd(ctx->render_gpu_fd, &devid)) {
+  if (!devid_from_fd(ctx->render_gpu_fd, &devid)) {
+    if (!devid_from_fd(ctx->virtio_gpu_fd, &devid)) {
       fprintf(stderr, "failed to get any devid\n");
       exit(EXIT_FAILURE);
     }
@@ -446,8 +451,8 @@ static void sl_linux_dmabuf_modifier(void* data,
     return;
   }
 
-  if (modifier != DRM_FORMAT_MOD_LINEAR) {
-    printf("%s(): ignore nonlinear modifier = %lx\n", __func__, modifier);
+  if (modifier != DRM_FORMAT_MOD_LINEAR && modifier != DRM_FORMAT_MOD_INVALID) {
+    printf("%s(): ignore modifier = %lx\n", __func__, modifier);
     return;
   }
   printf("%s(): advertise format = %x, modifier = %lx\n", __func__, format, modifier);

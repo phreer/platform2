@@ -131,7 +131,10 @@ void sl_context_init_default(struct sl_context* ctx) {
   ctx->wayland_channel_event_source = nullptr;
   ctx->virtwl_socket_event_source = nullptr;
   ctx->vm_id = DEFAULT_VM_NAME;
-  ctx->drm_device = nullptr;
+  ctx->virtio_gpu_fd = -1;
+  ctx->virtio_gpu_drm_device = nullptr;
+  ctx->render_gpu_fd = -1;
+  ctx->render_drm_device = nullptr;
   ctx->gbm = nullptr;
   ctx->xwayland = 0;
   ctx->xwayland_pid = -1;
