@@ -679,7 +679,7 @@ void sl_registry_handler(void* data,
     linux_dmabuf->id = id;
     linux_dmabuf->version = version;
     linux_dmabuf->internal = static_cast<zwp_linux_dmabuf_v1*>(wl_registry_bind(
-        registry, id, &zwp_linux_dmabuf_v1_interface, linux_dmabuf->version));
+        registry, id, &zwp_linux_dmabuf_v1_interface, 3));
     assert(!ctx->linux_dmabuf);
     ctx->linux_dmabuf = linux_dmabuf;
     linux_dmabuf->host_drm_global = sl_drm_global_create(ctx);
@@ -3654,7 +3654,7 @@ void sl_spawn_xwayland(sl_context* ctx,
     args[i++] = "-rootless";
     // Use software rendering unless we have a DRM device and glamor is
     // enabled.
-    if (!ctx->drm_device || !glamor || !strcmp(glamor, "0"))
+    if (!ctx->render_drm_device || !glamor || !strcmp(glamor, "0"))
       args[i++] = "-shm";
     args[i++] = "-displayfd";
     args[i++] = display_fd_str;
@@ -3934,11 +3934,11 @@ int real_main(int argc, char** argv) {
   }
 
   // Open GBM device for video memory management.
-  ctx.virtio_gpu_fd = open_drm_device(VIRTIO_GPU_DRIVER_NAME, &ctx.virtgpu_drm_device);
+  ctx.virtio_gpu_fd = open_drm_device(VIRTIO_GPU_DRIVER_NAME, &ctx.virtio_gpu_drm_device);
   if (force_drm_device != NULL) {
     // Use DRM device specified on the command line.
-    ctx.virtio_gpu_fd = open(force_drm_device, O_RDWR | O_CLOEXEC);
-    if (drm_fd == -1) {
+    ctx.render_gpu_fd = open(force_drm_device, O_RDWR | O_CLOEXEC);
+    if (ctx.render_gpu_fd == -1) {
       fprintf(stderr, "error: could not open %s (%s)\n", force_drm_device,
               strerror(errno));
       return EXIT_FAILURE;
@@ -3948,7 +3948,7 @@ int real_main(int argc, char** argv) {
     ctx.render_gpu_fd = ctx.virtio_gpu_fd;
     ctx.render_drm_device = ctx.virtio_gpu_drm_device;
   }
-  if (drm_fd >= 0) {
+  if (ctx.render_gpu_fd >= 0) {
     ctx.gbm = gbm_create_device(ctx.render_gpu_fd);
     if (!ctx.gbm) {
       fprintf(stderr, "error: couldn't get display device\n");
