@@ -4138,5 +4138,7 @@ int real_main(int argc, char** argv) {
     }
   }
 
+  ctx.stop = true;
+  pthread_join(ctx.thread_id, NULL);
   return EXIT_SUCCESS;
 }  // NOLINT(readability/fn_size)
