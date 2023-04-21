@@ -6,9 +6,12 @@
 
 #include <assert.h>
 #include <cerrno>
+#include <cstdlib>
 #include <string>
 #include <sys/socket.h>
+#include <sys/epoll.h>
 #include <unistd.h>
+#include <wayland-server-core.h>
 #include <wayland-util.h>
 
 #include "aura-shell-client-protocol.h"  // NOLINT(build/include_directory)
@@ -127,6 +130,7 @@ void sl_context_init_default(struct sl_context* ctx) {
   ctx->wayland_channel_event_source = NULL;
   ctx->virtwl_socket_event_source = NULL;
   ctx->vm_id = DEFAULT_VM_NAME;
+  ctx->stop = 0;
   ctx->virtio_gpu_fd = -1;
   ctx->virtio_gpu_drm_device = NULL;
   ctx->render_gpu_fd = -1;
@@ -229,7 +233,7 @@ static int sl_handle_clipboard_event(int fd, uint32_t mask, void* data) {
   return 1;
 }
 
-static int sl_handle_wayland_channel_event(int fd, uint32_t mask, void* data) {
+static int sl_handle_wayland_channel_event(void* data) {
   TRACE_EVENT("surface", "sl_handle_wayland_channel_event");
   struct sl_context* ctx = (struct sl_context*)data;
   struct WaylandSendReceive receive = {0};
@@ -242,15 +246,7 @@ static int sl_handle_wayland_channel_event(int fd, uint32_t mask, void* data) {
   ssize_t bytes;
   int rv;
 
-  if (!(mask & WL_EVENT_READABLE)) {
-    fprintf(stderr,
-            "Got error or hangup on virtwl ctx fd"
-            " (mask %d), exiting\n",
-            mask);
-    exit(EXIT_SUCCESS);
-  }
-
-  receive.channel_fd = fd;
+  receive.channel_fd = ctx->wayland_channel_fd;
   rv = ctx->channel->handle_channel_event(event_type, receive, pipe_read_fd);
   if (rv) {
     close(ctx->virtwl_socket_fd);
@@ -303,7 +299,7 @@ static int sl_handle_wayland_channel_event(int fd, uint32_t mask, void* data) {
   return 1;
 }
 
-static int sl_handle_virtwl_socket_event(int fd, uint32_t mask, void* data) {
+static int sl_handle_virtwl_socket_event(void* data) {
   TRACE_EVENT("surface", "sl_handle_virtwl_socket_event");
   struct sl_context* ctx = (struct sl_context*)data;
   struct WaylandSendReceive send = {0};
@@ -315,14 +311,6 @@ static int sl_handle_virtwl_socket_event(int fd, uint32_t mask, void* data) {
   struct cmsghdr* cmsg;
   ssize_t bytes;
   int rv;
-
-  if (!(mask & WL_EVENT_READABLE)) {
-    fprintf(stderr,
-            "Got error or hangup on virtwl socket"
-            " (mask %d), exiting\n",
-            mask);
-    exit(EXIT_SUCCESS);
-  }
 
   buffer_iov.iov_base = data_buffer;
   buffer_iov.iov_len = ctx->channel->max_send_size();
@@ -367,6 +355,49 @@ static int sl_handle_virtwl_socket_event(int fd, uint32_t mask, void* data) {
   return 1;
 }
 
+void* channel_event_worker(void* data) {
+  struct sl_context* ctx = static_cast<struct sl_context*>(data);
+  int ret = 0;
+  int epoll_fd = epoll_create(2);
+  assert(epoll_fd > 0);
+  struct epoll_event event = {0};
+  printf("%s(): thread started\n", __func__);
+  event.events = EPOLLIN;
+
+  event.data.fd = ctx->wayland_channel_fd;
+  ret = epoll_ctl(epoll_fd, EPOLL_CTL_ADD, ctx->wayland_channel_fd, &event);
+  assert(ret != -1);
+
+  event.data.fd = ctx->virtwl_socket_fd;
+  ret = epoll_ctl(epoll_fd, EPOLL_CTL_ADD, ctx->virtwl_socket_fd, &event);
+  assert(ret != -1);
+
+  while (true) {
+    if (ctx->stop) {
+      break;
+    }
+    ret = epoll_wait(epoll_fd, &event, 1, -1);
+    if (ret == -1 && errno != EINTR) {
+      fprintf(stderr, "failed to wait on epoll fd\n");
+      exit(EXIT_FAILURE);
+    }
+    if (ret == 0) continue;
+    if (!(event.events & EPOLLIN)) {
+      fprintf(stderr,
+              "Got error or hangup on %s socket (event = %d), exiting\n",
+              event.data.fd == ctx->wayland_channel_fd ? "wayland_chennel" : "virtwl_socket",
+              event.events);
+      exit(EXIT_FAILURE);
+    }
+    if (event.data.fd == ctx->wayland_channel_fd) {
+      sl_handle_wayland_channel_event(ctx);
+    } else if (event.data.fd == ctx->virtwl_socket_fd) {
+      sl_handle_virtwl_socket_event(ctx);
+    }
+  }
+  return NULL;
+}
+
 bool sl_context_init_wayland_channel(struct sl_context* ctx,
                                      struct wl_event_loop* event_loop,
                                      bool display) {
@@ -401,12 +432,8 @@ bool sl_context_init_wayland_channel(struct sl_context* ctx,
       return false;
     }
 
-    ctx->virtwl_socket_event_source.reset(wl_event_loop_add_fd(
-        event_loop, ctx->virtwl_socket_fd, WL_EVENT_READABLE,
-        sl_handle_virtwl_socket_event, ctx));
-    ctx->wayland_channel_event_source.reset(wl_event_loop_add_fd(
-        event_loop, ctx->wayland_channel_fd, WL_EVENT_READABLE,
-        sl_handle_wayland_channel_event, ctx));
+    rv = pthread_create(&ctx->thread_id, NULL, channel_event_worker, ctx);
+    assert(rv == 0);
   }
   return true;
 }

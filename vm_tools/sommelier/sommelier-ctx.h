@@ -11,6 +11,7 @@
 #include <wayland-util.h>
 #include <xcb/xcb.h>
 #include <limits.h>
+#include <pthread.h>
 
 #include "sommelier-timing.h"  // NOLINT(build/include_directory)
 #include "sommelier-util.h"    // NOLINT(build/include_directory)
@@ -98,6 +99,9 @@ struct sl_context {
   int virtwl_display_fd;
   std::unique_ptr<struct wl_event_source> wayland_channel_event_source;
   std::unique_ptr<struct wl_event_source> virtwl_socket_event_source;
+
+  pthread_t thread_id;
+  int stop = false;
 
   int virtio_gpu_fd;
   char* virtio_gpu_drm_device;
