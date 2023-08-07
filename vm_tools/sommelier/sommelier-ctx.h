@@ -125,6 +125,7 @@ struct sl_context {
 
   int xwayland;
   pid_t xwayland_pid;
+  const char *xwayland_verbose;
   // XWayland-hosting sommelier instances allow additional connections for IME
   // support.
   wl_listener extra_client_created_listener;

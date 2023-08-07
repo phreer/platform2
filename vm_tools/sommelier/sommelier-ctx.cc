@@ -138,6 +138,7 @@ void sl_context_init_default(struct sl_context* ctx) {
   ctx->gbm = nullptr;
   ctx->xwayland = 0;
   ctx->xwayland_pid = -1;
+  ctx->xwayland_verbose = nullptr;
   ctx->child_pid = -1;
   ctx->peer_pid = -1;
   ctx->xkb_context = nullptr;

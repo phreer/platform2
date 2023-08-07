@@ -3382,6 +3382,7 @@ static void sl_print_usage() {
       "  --x-display=DISPLAY\t\tX11 display to listen on\n"
       "  --xwayland-path=PATH\t\tPath to Xwayland executable\n"
       "  --xwayland-gl-driver-path=PATH\tPath to GL drivers for Xwayland\n"
+      "  --xwayland-verbose=VERBOSE\t\tSet verbose level for Xwayland\n"
       "  --xwayland-cmd-prefix=PREFIX\tXwayland command line prefix\n"
       "  --enable-xshape\t\tEnable X11 XShape extension support\n"
       "  --enable-x11-move-windows\t\tLet X11 apps control window position,\n"
@@ -3702,6 +3703,10 @@ void sl_spawn_xwayland(sl_context* ctx,
       args[i++] = "-fp";
       args[i++] = sl_xasprintf("%s", xfont_path);
     }
+    if (ctx->xwayland_verbose) {
+      args[i++] = "-verbose";
+      args[i++] = ctx->xwayland_verbose;
+    }
     args[i++] = nullptr;
 
     // If a path is explicitly specified via command line or environment
@@ -3828,6 +3833,8 @@ int real_main(int argc, char** argv) {
       xwayland_path = sl_arg_value(arg);
     } else if (strstr(arg, "--xwayland-gl-driver-path") == arg) {
       xwayland_gl_driver_path = sl_arg_value(arg);
+    } else if (strstr(arg, "--xwayland-verbose") == arg) {
+      ctx.xwayland_verbose = sl_arg_value(arg);
     } else if (strstr(arg, "--no-exit-with-child") == arg) {
       ctx.exit_with_child = 0;
     } else if (strstr(arg, "--sd-notify") == arg) {
