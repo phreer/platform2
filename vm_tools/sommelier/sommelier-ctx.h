@@ -215,6 +215,7 @@ struct sl_context {
   bool use_direct_scale;
 
   bool enable_linux_dmabuf_global;
+  bool enable_linux_dmabuf_modifier;
 
   // Experimental feature flags to be cleaned up.
   bool enable_x11_move_windows;  // TODO(b/247452928): Clean this up.

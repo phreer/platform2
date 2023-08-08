@@ -3867,6 +3867,8 @@ int real_main(int argc, char** argv) {
       ctx.enable_x11_move_windows = true;
     } else if (strstr(arg, "--enable-linux-dmabuf-global") == arg) {
       ctx.enable_linux_dmabuf_global = true;
+    } else if (strstr(arg, "--enable-linux-dmabuf-modifier") == arg) {
+      ctx.enable_linux_dmabuf_modifier = true;
     }else if (strstr(arg, "--virtgpu-channel") == arg) {
       ctx.use_virtgpu_channel = true;
     } else if (strstr(arg, "--noop-driver") == arg) {

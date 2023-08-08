@@ -20,10 +20,13 @@
 #include <cstdlib>
 #include <map>
 
+#include "compositor/sommelier-dma-buf.h"
 #include "virtualization/linux-headers/virtgpu_drm.h"  // NOLINT(build/include_directory)
 
 #include "linux-dmabuf-unstable-v1-client-protocol.h"  // NOLINT(build/include_directory)
 #include "linux-dmabuf-unstable-v1-server-protocol.h"  // NOLINT(build/include_directory)
+
+#define SL_DMABUF_MAX_PLANES 4
 
 struct sl_host_linux_dmabuf_feedback;
 
@@ -46,13 +49,12 @@ struct sl_host_linux_dmabuf {
 };
 
 struct sl_dmabuf_plane {
-  int32_t fd;
-  uint32_t plane_idx;
+  bool set;
+  int fd;
   uint32_t offset;
   uint32_t stride;
   uint32_t modifier_hi;
   uint32_t modifier_lo;
-  struct sl_dmabuf_plane *next;
 };
 
 struct sl_host_linux_buffer_params {
@@ -63,7 +65,7 @@ struct sl_host_linux_buffer_params {
   int32_t height;
   uint32_t format;
   uint32_t flags;
-  struct sl_dmabuf_plane *plane_list;
+  struct sl_dmabuf_plane planes[SL_DMABUF_MAX_PLANES];
   struct sl_host_buffer *host_buffer;
 
   // Proxy data
@@ -103,15 +105,24 @@ static void sl_linux_buffer_params_v1_add(struct wl_client *client,
   struct sl_host_linux_buffer_params *host =
       static_cast<sl_host_linux_buffer_params*>(
           wl_resource_get_user_data(resource));
-  struct sl_dmabuf_plane *plane = static_cast<sl_dmabuf_plane*>(malloc(sizeof(*plane)));
+  struct sl_dmabuf_plane *plane = &host->planes[plane_idx];
   struct drm_prime_handle prime_handle;
   int ret = 0;
   int drm_fd = gbm_device_get_fd(host->host_linux_dmabuf->ctx->gbm);
   uint64_t modifier = ((uint64_t) modifier_hi << 32) | modifier_lo;
 
-  assert(plane);
-  printf("%s(): modifier = %lx\n", __func__, modifier);
+  if (plane_idx >= SL_DMABUF_MAX_PLANES) {
+    wl_resource_post_error(resource,
+			ZWP_LINUX_BUFFER_PARAMS_V1_ERROR_PLANE_IDX,
+			"plane index out of bound: %u >= %u", plane_idx, SL_DMABUF_MAX_PLANES);
+  }
 
+  if (host->planes[plane_idx].set) {
+    wl_resource_post_error(resource,
+			ZWP_LINUX_BUFFER_PARAMS_V1_ERROR_PLANE_SET,
+			"plane index already set: %u", plane_idx);
+  }
+  printf("%s(): add modifier = 0x%lx\n", __func__, modifier);
   memset(&prime_handle, 0, sizeof(prime_handle));
   prime_handle.fd = fd;
   ret = drmIoctl(drm_fd, DRM_IOCTL_PRIME_FD_TO_HANDLE, &prime_handle);
@@ -134,7 +145,6 @@ static void sl_linux_buffer_params_v1_add(struct wl_client *client,
         modifier = info_arg.format_modifier;
         modifier_lo = modifier & 0xffffffff;
         modifier_hi = modifier >> 32;
-        printf("%s(): setting stride = %u, modifier = 0x%lx\n", __func__, stride, modifier);
       }
     }
 
@@ -143,13 +153,11 @@ static void sl_linux_buffer_params_v1_add(struct wl_client *client,
     gem_close.handle = prime_handle.handle;
     drmIoctl(drm_fd, DRM_IOCTL_GEM_CLOSE, &gem_close);
   }
-  plane->next = host->plane_list;
   plane->fd = fd;
   plane->offset = offset;
   plane->stride = stride;
   plane->modifier_lo = modifier_lo;
   plane->modifier_hi = modifier_hi;
-  host->plane_list = plane;
 
   zwp_linux_buffer_params_v1_add(host->proxy, fd, plane_idx, offset, stride,
                                  modifier_hi, modifier_lo);
@@ -164,13 +172,56 @@ void sl_linux_buffer_params_v1_create(struct wl_client *client,
   struct sl_host_linux_buffer_params *host =
       static_cast<sl_host_linux_buffer_params*>(
           wl_resource_get_user_data(resource));
-  printf("%s(): format = %x\n", __func__, format);
+  printf("%s(): format = 0x%x\n", __func__, format);
 
   zwp_linux_buffer_params_v1_create(host->proxy, width, height, format, flags);
   host->width = width;
   host->height = height;
   host->format = format;
   host->flags = flags;
+}
+
+static void sl_fence_sync(struct sl_context* ctx,
+                        struct sl_sync_point* sync_point) {
+  int drm_fd = gbm_device_get_fd(ctx->gbm);
+  struct drm_prime_handle prime_handle;
+  int sync_file_fd;
+  int ret;
+
+  // Attempt to export a sync_file from prime buffer and wait explicitly.
+  ret = sl_dmabuf_get_read_sync_file(sync_point->fd, sync_file_fd);
+  if (!ret) {
+    TRACE_EVENT("drm", "sl_drm_sync: sync_wait", "prime_fd", sync_point->fd);
+    sl_dmabuf_sync_wait(sync_file_fd);
+    close(sync_file_fd);
+    return;
+  }
+
+  // Fallback to waiting on a virtgpu buffer's implicit fence.
+  //
+  // First imports the prime fd to a gem handle. This will fail if this
+  // function was not passed a prime handle that can be imported by the drm
+  // device given to sommelier.
+  memset(&prime_handle, 0, sizeof(prime_handle));
+  prime_handle.fd = sync_point->fd;
+  TRACE_EVENT("drm", "sl_drm_sync: virtgpu_wait", "prime_fd", prime_handle.fd);
+  ret = drmIoctl(drm_fd, DRM_IOCTL_PRIME_FD_TO_HANDLE, &prime_handle);
+  if (!ret) {
+    struct drm_virtgpu_3d_wait wait_arg;
+    struct drm_gem_close gem_close;
+
+    // Then attempts to wait for GPU operations to complete. This will fail
+    // silently if the drm device passed to sommelier is not a virtio-gpu
+    // device.
+    memset(&wait_arg, 0, sizeof(wait_arg));
+    wait_arg.handle = prime_handle.handle;
+    drmIoctl(drm_fd, DRM_IOCTL_VIRTGPU_WAIT, &wait_arg);
+
+    // Always close the handle we imported.
+    memset(&gem_close, 0, sizeof(gem_close));
+    gem_close.handle = prime_handle.handle;
+    drmIoctl(drm_fd, DRM_IOCTL_GEM_CLOSE, &gem_close);
+  }
 }
 
 void sl_linux_buffer_params_v1_create_immed(struct wl_client *client,
@@ -193,6 +244,8 @@ void sl_linux_buffer_params_v1_create_immed(struct wl_client *client,
   struct sl_host_buffer* host_buffer = sl_create_host_buffer(
       host->host_linux_dmabuf->ctx, client, buffer_id, buffer, width, height, true);
   host->host_buffer = host_buffer;
+  host_buffer->sync_point = sl_sync_point_create(host->planes[0].fd);
+  host_buffer->sync_point->sync = sl_fence_sync;
 }
 
 static const struct zwp_linux_buffer_params_v1_interface
@@ -207,12 +260,8 @@ sl_linux_buffer_params_v1_implementation = {
 static void sl_destroy_host_linux_buffer_params_v1(struct wl_resource* resource) {
   struct sl_host_linux_buffer_params* host =
       static_cast<struct sl_host_linux_buffer_params*>(wl_resource_get_user_data(resource));
-  struct sl_dmabuf_plane *plane = host->plane_list;
-  while (plane) {
-    host->plane_list = plane->next;
-    close(plane->fd);
-    free(plane);
-    plane = host->plane_list;
+  for (int i = 0; i < SL_DMABUF_MAX_PLANES; ++i) {
+    if (host->planes[i].set) close(host->planes[i].fd);
   }
   zwp_linux_buffer_params_v1_destroy(host->proxy);
   wl_resource_set_user_data(resource, NULL);
@@ -254,10 +303,9 @@ static void sl_linux_dmabuf_create_params(struct wl_client *client,
       static_cast<struct sl_host_linux_buffer_params*>(
           malloc(sizeof(*host_linux_buffer_params)));
   assert(host_linux_buffer_params);
-
+  memset(host_linux_buffer_params, 0, sizeof(*host_linux_buffer_params));
   host_linux_buffer_params->host_linux_dmabuf = host;
   host_linux_buffer_params->client = client;
-  host_linux_buffer_params->plane_list = nullptr;
   host_linux_buffer_params->resource = wl_resource_create(
       client, &zwp_linux_buffer_params_v1_interface, host->version, params_id);
   wl_resource_set_user_data(host_linux_buffer_params->resource, host_linux_buffer_params);
@@ -341,7 +389,6 @@ static int advertise_feedback_event(void* data) {
   struct sl_context* ctx = host->ctx;
   struct wl_event_source* timer_event;
 
-  printf("%s(): send event\n", __func__);
   // Send main device
   dev_t devid;
   if (!devid_from_fd(ctx->render_gpu_fd, &devid)) {
@@ -441,16 +488,19 @@ static void sl_linux_dmabuf_modifier(void* data,
   struct sl_host_linux_dmabuf* host = static_cast<sl_host_linux_dmabuf*>(
       zwp_linux_dmabuf_v1_get_user_data(linux_dmabuf));
   uint64_t modifier = static_cast<uint64_t>(modifier_hi) << 32 | modifier_lo; 
-  if (format != DRM_FORMAT_RGB565 && format != DRM_FORMAT_ARGB8888 &&
-      format != DRM_FORMAT_ABGR8888 && format != DRM_FORMAT_XRGB8888 &&
-      format != DRM_FORMAT_XBGR8888) {
-    printf("%s(): ignore format = %x\n", __func__, format);
-    return;
-  }
+  bool only_simple_buffer = !host->ctx->enable_linux_dmabuf_modifier;
+  if (only_simple_buffer) {
+    if (format != DRM_FORMAT_RGB565 && format != DRM_FORMAT_ARGB8888 &&
+        format != DRM_FORMAT_ABGR8888 && format != DRM_FORMAT_XRGB8888 &&
+        format != DRM_FORMAT_XBGR8888) {
+      printf("%s(): ignore format = %x\n", __func__, format);
+      return;
+    }
 
-  if (modifier != DRM_FORMAT_MOD_LINEAR && modifier != DRM_FORMAT_MOD_INVALID) {
-    printf("%s(): ignore modifier = %lx\n", __func__, modifier);
-    return;
+    if (modifier != DRM_FORMAT_MOD_LINEAR && modifier != DRM_FORMAT_MOD_INVALID) {
+      printf("%s(): ignore modifier = %lx\n", __func__, modifier);
+      return;
+    }
   }
   printf("%s(): advertise format = %x, modifier = %lx\n", __func__, format, modifier);
   if (host->format_count >= host->format_capability) {
