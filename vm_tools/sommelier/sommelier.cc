@@ -153,7 +153,7 @@ const char* net_wm_state_to_string(int i) {
 struct sl_sync_point* sl_sync_point_create(int fd) {
   TRACE_EVENT("sync", "sl_sync_point_create");
   struct sl_sync_point* sync_point = new sl_sync_point();
-  sync_point->fd = fd;
+  sync_point->fd = dup(fd);
   sync_point->sync = nullptr;
 
   return sync_point;
