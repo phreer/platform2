@@ -113,6 +113,7 @@ struct sl_context {
   pthread_t thread_id;
   int stop = false;
   const char* drm_device;
+  int drm_fd;
   struct gbm_device* gbm;
   int xwayland;
   pid_t xwayland_pid;

@@ -19,6 +19,8 @@
 // Default buffer size based on the size of a typical page.
 #define DEFAULT_BUFFER_SIZE 4096
 
+#define VIRTIO_GPU_DRIVER_NAME "virtio_gpu"
+
 struct WaylandSendReceive {
   int channel_fd;
 
@@ -298,6 +300,6 @@ class VirtGpuChannel : public WaylandChannel {
   std::vector<PipeDescription> pipe_cache_;
 };
 
-int open_virtgpu(char** drm_device);
+int open_drm_device(const char *driver_name, char** drm_device);
 
 #endif  // VM_TOOLS_SOMMELIER_VIRTUALIZATION_WAYLAND_CHANNEL_H_
