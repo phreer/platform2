@@ -162,13 +162,14 @@ main()
             read -r vendor < "${f}/vendor"
             read -r class < "${f}/class"
 
-            # Check if NVIDIA dGPU device is detected.
+            # Check if NVIDIA dGPU or Intel SR-IOV device is detected.
             # class "0x030200" = 3D Controller;
             # class "0x030000" = VGA device;
-            if [[ "${vendor}" == "0x10de" ]] && \
-              ([[ "${class}" == "0x030200" ]] || \
-              ([[ "${class}" == "0x030000" ]] && \
-               [[ "$(cat "${f}/boot_vga")" == "0" ]])); then
+            if ([[ "${vendor}" == "0x10de" ]] || \
+                [[ "${vendor}" == "0x8086" ]]) && \
+               ([[ "${class}" == "0x030200" ]] || \
+               ([[ "${class}" == "0x030000" ]] && \
+                [[ "$(cat "${f}/boot_vga")" == "0" ]])); then
                 gpu_path="${f}"
                 gpu_audio_path="$(echo "${gpu_path}" | sed -e "s/0$/1/")"
                 gpu_usb_path="$(echo "${gpu_path}" | sed -e "s/0$/2/")"
