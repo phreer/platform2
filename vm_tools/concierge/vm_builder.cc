@@ -546,12 +546,25 @@ base::StringPairs VmBuilder::BuildRunParams() const {
   }
 
   if (enable_dgpu_passthrough_) {
+    bool has_intel_sriov_gpu = false;
     std::vector<base::FilePath> dgpu_devices = GetPciDevicesList(
         pci_utils::PciDeviceType::PCI_DEVICE_TYPE_DGPU_PASSTHROUGH);
 
     for (const auto& dgpu_device : dgpu_devices) {
+      bool is_intel_sriov_gpu = pci_utils::IsIntelSriovGpuDevice(dgpu_device);
+      if (is_intel_sriov_gpu && has_intel_sriov_gpu) {
+        // It makes no sense to pass through multiple SR-IOV GPUs to a single VM.
+        continue;
+      }
+
       std::string dgpu_pt_arg =
           base::StringPrintf("%s,iommu=viommu", dgpu_device.value().c_str());
+      if (is_intel_sriov_gpu) {
+        has_intel_sriov_gpu = true;
+	// Intel SR-IOV VF GPU must have guest address with function number of zero.
+        dgpu_pt_arg += base::StringPrintf(",guest-address=%s",
+                                          pci_utils::kIntelSriovGpuGuestAddress);
+      }
       args.emplace_back("--vfio", std::move(dgpu_pt_arg));
     }
 

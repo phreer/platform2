@@ -58,6 +58,9 @@ constexpr char kPciDriverFileName[] = "driver";
 // The Vendor Id for NVIDIA devices.
 constexpr uint16_t kNvidiaVendorId = 0x10de;
 
+// The Vendor Id for Intel devices.
+constexpr uint16_t kIntelVendorId = 0x8086;
+
 // The class number for VGA devices.
 constexpr uint32_t kVgaDeviceClass = 0x030000;
 
@@ -70,6 +73,25 @@ constexpr char kPciDevicesPath[] = "/sys/bus/pci/devices";
 // This pattern is to search for "0000:02:00.0" directory within
 // /sys/bus/pci/devices/
 constexpr char kPciDevicePattern[] = "0000:*";
+
+constexpr uint32_t kIntelSriovGpuPciBusNumber = 0;
+constexpr uint32_t kIntelSriovGpuPciDeviceNumber = 2;
+constexpr uint32_t kIntelSriovGpuPciFunctionNumberMin = 1;
+constexpr uint32_t kIntelSriovGpuPciFunctionNumberMax = 7;
+
+// Returns the bus, device and function for the PCI device at |pci_device|.
+// Returns std::nullopt in case of any parsing errors.
+std::optional<PciBdf> GetPciDeviceBdf(const base::FilePath& pci_device) {
+  std::string bdf = pci_device.BaseName().value();
+  PciBdf result;
+  int ret = std::sscanf(bdf.c_str(), "0000:%u:%u.%u",
+		        &result.bus, &result.device, &result.function);
+  if (ret != 3) {
+    LOG(ERROR) << "Failed to parse BDF for device " << pci_device;
+    return std::nullopt;
+  }
+  return result;
+}
 
 // Returns the vendor ID for the PCI device at |pci_device|. Returns
 // std::nullopt in case of any parsing errors.
@@ -175,11 +197,30 @@ bool IsDGpuPassthroughDevice(const base::FilePath& pci_device) {
   if (!vendor_id) {
     return false;
   }
-  if (vendor_id.value() != kNvidiaVendorId) {
+
+  if (vendor_id.value() != kNvidiaVendorId && vendor_id.value() != kIntelVendorId) {
     return false;
   }
 
   return true;
+}
+
+bool IsIntelSriovGpuDevice(const base::FilePath& pci_device) {
+  auto vendor_id = GetPciDeviceVendorId(pci_device);
+  if (!vendor_id || vendor_id.value() != kIntelVendorId) {
+    return false;
+  }
+  std::optional<PciBdf> bdf = GetPciDeviceBdf(pci_device);
+  // Intel SR-IOV VF devices always have pci address with the form 0000:00:02.x
+  // where x ranges from 1 to 7.
+  if (bdf.has_value() &&
+      bdf->bus == kIntelSriovGpuPciBusNumber &&
+      bdf->device == kIntelSriovGpuPciDeviceNumber &&
+      bdf->function >= kIntelSriovGpuPciFunctionNumberMin &&
+      bdf->function <= kIntelSriovGpuPciFunctionNumberMax) {
+    return true;
+  }
+  return false;
 }
 
 std::vector<base::FilePath> GetPciDevicesList(PciDeviceType device_type) {

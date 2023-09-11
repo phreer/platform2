@@ -28,6 +28,18 @@ enum class PciDeviceType : uint8_t {
   PCI_DEVICE_TYPE_DGPU_PASSTHROUGH = 1
 };
 
+struct PciBdf {
+    uint32_t bus;
+    uint32_t device;
+    uint32_t function;
+};
+
+constexpr char kIntelSriovGpuGuestAddress[] = "0000:00:02.0";
+
+// Returns the bus, device and function for the PCI device at |pci_device|.
+// Returns std::nullopt in case of any parsing errors.
+std::optional<PciBdf> GetPciDeviceBdf(const base::FilePath& pci_device);
+
 // Returns the vendor ID for the PCI device at |pci_device|. Returns
 // std::nullopt in case of any parsing errors.
 std::optional<uint32_t> GetPciDeviceNodeValue(const base::FilePath& pci_device,
@@ -57,6 +69,9 @@ std::string GetPciDeviceDriverName(const base::FilePath& pci_device);
 // by comparing it's class number, ensuring it's a non boot_vga device and
 // it's bound to vfio-pci module.
 bool IsDGpuPassthroughDevice(const base::FilePath& pci_device);
+
+// Returns true iff |pci_device| is a Intel SR-IOV VF device.
+bool IsIntelSriovGpuDevice(const base::FilePath& pci_device);
 
 std::vector<base::FilePath> GetPciDevicesList(PciDeviceType device_type);
 
