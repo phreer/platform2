@@ -250,6 +250,9 @@ bool TerminaVm::Start(VmBuilder vm_builder) {
   if (features_.dgpu_passthrough) {
     if (classification_ == apps::VmType::BOREALIS) {
       vm_builder.EnableDGpuPassthrough(true);
+      vm_builder.EnableCrossDomainContext(true);
+      vm_builder.EnableVirglContext(true);
+      vm_builder.EnableUdmabuf(true);
     } else {
       LOG(ERROR) << "--enable-dgpu-passthrough is only supported on Borealis.";
       return false;

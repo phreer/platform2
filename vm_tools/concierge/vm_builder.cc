@@ -201,6 +201,16 @@ VmBuilder& VmBuilder::EnableCrossDomainContext(bool enable) {
   return *this;
 }
 
+VmBuilder& VmBuilder::EnableVirglContext(bool enable) {
+  enable_virgl_context_ = enable;
+  return *this;
+}
+
+VmBuilder& VmBuilder::EnableUdmabuf(bool enable) {
+  enable_udmabuf_ = enable;
+  return *this;
+}
+
 VmBuilder& VmBuilder::EnableBigGl(bool enable) {
 #if USE_BIG_GL
   enable_big_gl_ = enable;
@@ -502,10 +512,13 @@ base::StringPairs VmBuilder::BuildRunParams() const {
   if (enable_gpu_) {
     std::string gpu_arg = "vulkan=";
     gpu_arg += enable_vulkan_ ? "true" : "false";
-    if (enable_virtgpu_native_context_ || enable_cross_domain_context_) {
+    if (enable_virtgpu_native_context_ || enable_cross_domain_context_ || enable_virgl_context_) {
       gpu_arg += ",context-types=";
       if (enable_cross_domain_context_) {
         gpu_arg += ":cross-domain";
+      }
+      if (enable_virgl_context_) {
+        gpu_arg += ":virgl2";
       }
       if (enable_vulkan_) {
         gpu_arg += ":venus";
@@ -513,6 +526,9 @@ base::StringPairs VmBuilder::BuildRunParams() const {
       if (enable_virtgpu_native_context_) {
         gpu_arg += ":drm";
       }
+    }
+    if (enable_udmabuf_) {
+      gpu_arg += ",udmabuf";
     }
     if (enable_big_gl_) {
       gpu_arg += ",gles=false";

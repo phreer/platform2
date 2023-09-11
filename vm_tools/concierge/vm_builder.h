@@ -70,6 +70,8 @@ class VmBuilder {
   VmBuilder& EnableVulkan(bool enable);
   VmBuilder& EnableVirtgpuNativeContext(bool enable);
   VmBuilder& EnableCrossDomainContext(bool enable);
+  VmBuilder& EnableVirglContext(bool enable);
+  VmBuilder& EnableUdmabuf(bool enable);
   // Make virglrenderer use Big GL instead of the default GLES.
   VmBuilder& EnableBigGl(bool enable);
   // Offload Vulkan use to isolated virglrenderer render server
@@ -140,6 +142,8 @@ class VmBuilder {
   bool enable_vulkan_ = false;
   bool enable_virtgpu_native_context_ = false;
   bool enable_cross_domain_context_ = false;
+  bool enable_virgl_context_ = false;
+  bool enable_udmabuf_ = false;
   bool enable_big_gl_ = false;
   bool enable_render_server_ = false;
   base::FilePath gpu_cache_path_;
