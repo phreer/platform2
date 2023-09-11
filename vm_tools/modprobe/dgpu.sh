@@ -166,7 +166,7 @@ main()
             # class "0x030200" = 3D Controller;
             # class "0x030000" = VGA device;
             if ([[ "${vendor}" == "0x10de" ]] || \
-                [[ "${vendor}" == "0x8086" ]]) && \
+               ([[ "${vendor}" == "0x8086" ]] && [[ "$device" == "0x7d45" ]])) && \
                ([[ "${class}" == "0x030200" ]] || \
                ([[ "${class}" == "0x030000" ]] && \
                 [[ "$(cat "${f}/boot_vga")" == "0" ]])); then

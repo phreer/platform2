@@ -9,6 +9,5 @@ ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030200"
 ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x040300", RUN+="/sbin/dgpu.sh -a"
 
 # And Intel
-ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x8086", ATTR{class}=="0x030000", ATTR{boot_vga}=="0", RUN+="/sbin/dgpu.sh -a"
-ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x8086", ATTR{class}=="0x030200", RUN+="/sbin/dgpu.sh -a"
-ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x8086", ATTR{class}=="0x040300", RUN+="/sbin/dgpu.sh -a"
+ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x8086", ATTR{class}=="0x030000", ATTR{device}="0x7d45", ATTR{boot_vga}=="1", ATTR{sriov_numvfs}="1"
+ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x8086", ATTR{class}=="0x030000", ATTR{device}="0x7d45", ATTR{boot_vga}=="0", RUN+="/sbin/dgpu.sh -a"
