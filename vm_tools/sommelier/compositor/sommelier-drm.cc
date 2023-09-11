@@ -293,7 +293,7 @@ static void sl_bind_host_drm(struct wl_client* client,
 
   host->linux_dmabuf_proxy = static_cast<zwp_linux_dmabuf_v1*>(wl_registry_bind(
       wl_display_get_registry(ctx->display), ctx->linux_dmabuf->id,
-      &zwp_linux_dmabuf_v1_interface, ctx->linux_dmabuf->version));
+      &zwp_linux_dmabuf_v1_interface, 2));
   zwp_linux_dmabuf_v1_add_listener(host->linux_dmabuf_proxy,
                                    &sl_linux_dmabuf_listener, host);
 

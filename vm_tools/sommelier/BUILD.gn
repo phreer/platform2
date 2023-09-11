@@ -107,6 +107,7 @@ static_library("libsommelier") {
     "sommelier-ctx.cc",
     "sommelier-data-device-manager.cc",
     "sommelier-display.cc",
+    "sommelier-linux-dmabuf.cc",
     "sommelier-global.cc",
     "sommelier-gtk-shell.cc",
     "sommelier-inpututils.cc",
