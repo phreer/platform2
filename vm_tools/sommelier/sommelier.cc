@@ -4132,13 +4132,19 @@ int real_main(int argc, char** argv) {
       }
       xcb_flush(ctx.connection);
     }
-    if (wl_display_flush(ctx.display) < 0)
+    if (wl_display_flush(ctx.display) < 0) {
+      ctx.stop = true;
+      pthread_join(ctx.thread_id, NULL);
       return EXIT_FAILURE;
+    }
 
     if (wl_event_loop_dispatch(event_loop, -1) == -1) {
       // Ignore EINTR or sommelier will exit when attached by strace or gdb.
-      if (errno != EINTR)
+      if (errno != EINTR) {
+        ctx.stop = true;
+        pthread_join(ctx.thread_id, NULL);
         return EXIT_FAILURE;
+      }
     }
   }
 
